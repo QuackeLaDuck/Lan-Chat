@@ -1,0 +1,142 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Local Network P2P Chat</title>
+<style>
+  body { font-family: Arial, sans-serif; margin: 20px; background: #f0f0f0; }
+  #chat { width: 100%; height: 300px; overflow-y: auto; background: white; padding: 10px; border: 1px solid #ccc; }
+  #message { width: 80%; padding: 8px; }
+  #send { padding: 8px 12px; }
+  textarea { width: 100%; height: 100px; }
+  button { margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<h2>Local Network P2P Chat (Single File)</h2>
+
+<div id="chat"></div>
+
+<input id="message" placeholder="Type your message..." autocomplete="off" />
+<button id="send">Send</button>
+
+<hr />
+
+<h3>Signaling</h3>
+
+<button id="createOffer">Create Offer</button>
+<button id="createAnswer">Create Answer</button>
+
+<p><b>Local Description (send this to your peer):</b></p>
+<textarea id="localDesc" readonly></textarea>
+
+<p><b>Remote Description (paste peer's description here):</b></p>
+<textarea id="remoteDesc"></textarea>
+<button id="setRemoteDesc">Set Remote Description</button>
+
+<script>
+  const chat = document.getElementById('chat');
+  const messageInput = document.getElementById('message');
+  const sendBtn = document.getElementById('send');
+  const createOfferBtn = document.getElementById('createOffer');
+  const createAnswerBtn = document.getElementById('createAnswer');
+  const localDescTextarea = document.getElementById('localDesc');
+  const remoteDescTextarea = document.getElementById('remoteDesc');
+  const setRemoteDescBtn = document.getElementById('setRemoteDesc');
+
+  let pc;
+  let dataChannel;
+
+  function logMessage(msg, isLocal = false) {
+    const div = document.createElement('div');
+    div.textContent = (isLocal ? "You: " : "Peer: ") + msg;
+    div.style.padding = '4px';
+    div.style.marginBottom = '2px';
+    div.style.backgroundColor = isLocal ? '#d1ffd1' : '#ffd1d1';
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function createPeerConnection() {
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    pc.onicecandidate = event => {
+      if (event.candidate === null) {
+        // ICE gathering complete
+        localDescTextarea.value = JSON.stringify(pc.localDescription);
+      }
+    };
+
+    pc.ondatachannel = event => {
+      dataChannel = event.channel;
+      setupDataChannel();
+    };
+  }
+
+  function setupDataChannel() {
+    dataChannel.onopen = () => {
+      console.log("Data channel open");
+      sendBtn.disabled = false;
+    };
+    dataChannel.onmessage = event => {
+      logMessage(event.data, false);
+    };
+    dataChannel.onclose = () => {
+      console.log("Data channel closed");
+      sendBtn.disabled = true;
+    };
+  }
+
+  createOfferBtn.onclick = async () => {
+    createPeerConnection();
+    dataChannel = pc.createDataChannel("chat");
+    setupDataChannel();
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    // Wait for ICE gathering to complete before showing localDesc
+  };
+
+  createAnswerBtn.onclick = async () => {
+    createPeerConnection();
+
+    const remoteDesc = remoteDescTextarea.value;
+    if (!remoteDesc) {
+      alert("Paste the remote offer first!");
+      return;
+    }
+    await pc.setRemoteDescription(JSON.parse(remoteDesc));
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    // Wait for ICE gathering to complete before showing localDesc
+  };
+
+  setRemoteDescBtn.onclick = async () => {
+    const remoteDesc = remoteDescTextarea.value;
+    if (!remoteDesc) {
+      alert("Paste remote description!");
+      return;
+    }
+    await pc.setRemoteDescription(JSON.parse(remoteDesc));
+  };
+
+  sendBtn.onclick = () => {
+    const msg = messageInput.value.trim();
+    if (msg && dataChannel && dataChannel.readyState === "open") {
+      dataChannel.send(msg);
+      logMessage(msg, true);
+      messageInput.value = "";
+    }
+  };
+
+  sendBtn.disabled = true;
+</script>
+
+</body>
+</html>
