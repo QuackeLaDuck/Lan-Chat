@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AMOLED P2P Chat</title>
+<style>
+  body {
+    background: #000;
+    color: #00ff00;
+    font-family: 'Fira Mono', 'Consolas', monospace;
+    margin: 0;
+    padding: 0;
+  }
+  h2, h3 { color: #00ff00; }
+  #container {
+    max-width: 500px;
+    margin: 24px auto;
+    background: #111;
+    border-radius: 12px;
+    box-shadow: 0 0 16px #00ff0044;
+    padding: 20px;
+  }
+  #chat {
+    width: 100%;
+    height: 300px;
+    overflow-y: auto;
+    background: #000;
+    padding: 10px;
+    border: 1px solid #00ff00;
+    border-radius: 6px;
+    margin-bottom: 12px;
+  }
+  .msg {
+    margin-bottom: 6px;
+    padding: 6px 10px;
+    border-radius: 5px;
+    background: #003300;
+    color: #00ff00;
+    display: inline-block;
+    max-width: 90%;
+    word-break: break-word;
+  }
+  .me { background: #004400; text-align: right; float: right; }
+  .peer { background: #002200; text-align: left; float: left; }
+  #message { width: 70%; padding: 8px; background: #000; color: #00ff00; border: 1px solid #00ff00; border-radius: 4px;}
+  #send { padding: 8px 12px; background: #111; color: #00ff00; border: 1px solid #00ff00; border-radius: 4px;}
+  textarea { width: 100%; height: 90px; background: #000; color: #00ff00; border: 1px solid #00ff00; border-radius: 4px;}
+  button { margin-top: 6px; background: #111; color: #00ff00; border: 1px solid #00ff00; border-radius: 4px;}
+  #qrcode { margin: 10px 0; text-align: center; }
+  .row { display: flex; gap: 8px; }
+</style>
+<!-- QRCode.js from CDN -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+</head>
+<body>
+<div id="container">
+<h2>AMOLED P2P Chat</h2>
+<div id="chat"></div>
+<div class="row">
+  <input id="message" placeholder="Type your message..." autocomplete="off" />
+  <button id="send">Send</button>
+</div>
+<hr />
+<h3>Signaling (Easy QR Transfer!)</h3>
+<div class="row">
+  <button id="createOffer">Create Offer</button>
+  <button id="createAnswer">Create Answer</button>
+</div>
+<p><b>Local Description (send this to your peer):</b></p>
+<textarea id="localDesc" readonly></textarea>
+<div class="row">
+  <button id="copyLocal">Copy</button>
+  <button id="showQR">Show QR</button>
+</div>
+<div id="qrcode"></div>
+<p><b>Remote Description (paste or scan peer's):</b></p>
+<textarea id="remoteDesc"></textarea>
+<button id="setRemoteDesc">Set Remote Description</button>
+</div>
+<script>
+  const chat = document.getElementById('chat');
+  const messageInput = document.getElementById('message');
+  const sendBtn = document.getElementById('send');
+  const createOfferBtn = document.getElementById('createOffer');
+  const createAnswerBtn = document.getElementById('createAnswer');
+  const localDescTextarea = document.getElementById('localDesc');
+  const remoteDescTextarea = document.getElementById('remoteDesc');
+  const setRemoteDescBtn = document.getElementById('setRemoteDesc');
+  const copyLocalBtn = document.getElementById('copyLocal');
+  const showQRBtn = document.getElementById('showQR');
+  const qrDiv = document.getElementById('qrcode');
+
+  let pc;
+  let dataChannel;
+
+  function logMessage(msg, isLocal = false) {
+    const div = document.createElement('div');
+    div.className = 'msg ' + (isLocal ? 'me' : 'peer');
+    div.textContent = msg;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    setTimeout(() => { div.style.opacity = 1; }, 10);
+    // Clear floats
+    const clear = document.createElement('div');
+    clear.style.clear = 'both';
+    chat.appendChild(clear);
+  }
+
+  function createPeerConnection() {
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    pc.onicecandidate = event => {
+      if (event.candidate === null) {
+        localDescTextarea.value = JSON.stringify(pc.localDescription);
+        showQRBtn.disabled = false;
+        copyLocalBtn.disabled = false;
+      }
+    };
+
+    pc.ondatachannel = event => {
+      dataChannel = event.channel;
+      setupDataChannel();
+    };
+  }
+
+  function setupDataChannel() {
+    dataChannel.onopen = () => {
+      sendBtn.disabled = false;
+      logMessage('--- Connected! ---', false);
+    };
+    dataChannel.onmessage = event => {
+      logMessage(event.data, false);
+    };
+    dataChannel.onclose = () => {
+      sendBtn.disabled = true;
+      logMessage('--- Disconnected ---', false);
+    };
+  }
+
+  createOfferBtn.onclick = async () => {
+    createPeerConnection();
+    dataChannel = pc.createDataChannel("chat");
+    setupDataChannel();
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    showQRBtn.disabled = true;
+    copyLocalBtn.disabled = true;
+    qrDiv.innerHTML = '';
+  };
+
+  createAnswerBtn.onclick = async () => {
+    createPeerConnection();
+    const remoteDesc = remoteDescTextarea.value;
+    if (!remoteDesc) {
+      alert("Paste the remote offer first!");
+      return;
+    }
+    await pc.setRemoteDescription(JSON.parse(remoteDesc));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    showQRBtn.disabled = true;
+    copyLocalBtn.disabled = true;
+    qrDiv.innerHTML = '';
+  };
+
+  setRemoteDescBtn.onclick = async () => {
+    const remoteDesc = remoteDescTextarea.value;
+    if (!remoteDesc) {
+      alert("Paste or scan remote description!");
+      return;
+    }
+    await pc.setRemoteDescription(JSON.parse(remoteDesc));
+  };
+
+  sendBtn.onclick = () => {
+    const msg = messageInput.value.trim();
+    if (msg && dataChannel && dataChannel.readyState === "open") {
+      dataChannel.send(msg);
+      logMessage(msg, true);
+      messageInput.value = "";
+    }
+  };
+  sendBtn.disabled = true;
+
+  // Copy Local Description
+  copyLocalBtn.onclick = () => {
+    localDescTextarea.select();
+    document.execCommand('copy');
+    copyLocalBtn.textContent = 'Copied!';
+    setTimeout(() => copyLocalBtn.textContent = 'Copy', 1000);
+  };
+
+  // Show QR Code for Local Description
+  showQRBtn.onclick = () => {
+    qrDiv.innerHTML = '';
+    try {
+      const qr = new QRious({
+        element: document.createElement('canvas'),
+        value: localDescTextarea.value,
+        size: 200,
+        background: '#000',
+        foreground: '#00ff00'
+      });
+      qrDiv.appendChild(qr.element);
+    } catch (e) {
+      qrDiv.textContent = "QR code too large! Try copying instead.";
+    }
+  };
+  showQRBtn.disabled = true;
+  copyLocalBtn.disabled = true;
+
+  // Paste from clipboard if available (for remoteDesc)
+  remoteDescTextarea.addEventListener('focus', async () => {
+    if (navigator.clipboard) {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text.startsWith('{"type":')) {
+          remoteDescTextarea.value = text;
+        }
+      } catch {}
+    }
+  });
+
+  // Optional: Add QR code scanning (for mobile)
+  // For simplicity, not implemented here, but you can use libraries like html5-qrcode for this.
+
+</script>
+</body>
+</html>
